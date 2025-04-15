@@ -1,51 +1,48 @@
-from flask import Flask, request, send_file
-import yt_dlp
-import tempfile
-import os
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
+import yt_dlp
+import os
+import uuid
 
 app = Flask(__name__)
 CORS(app)
 
-@app.route('/download', methods=['POST'])
-def download():
+@app.route("/")
+def home():
+    return "Backend is working!"
+
+@app.route("/download", methods=["POST"])
+def download_video():
     data = request.get_json()
-    url = data['url']
-    fmt = data['format']
-    temp_dir = tempfile.mkdtemp()
+    video_url = data.get("url")
 
-    if fmt == 'mp3':
-        options = {
-            'format': 'bestaudio',
-            'outtmpl': f'{temp_dir}/audio.%(ext)s',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-            }]
-        }
-    elif fmt == '360':
-        options = {
-            'format': '18',
-            'outtmpl': f'{temp_dir}/video.mp4',
-        }
-    elif fmt == '720':
-        options = {
-            'format': '22',
-            'outtmpl': f'{temp_dir}/video.mp4',
-        }
-    else:
-        options = {
+    if not video_url:
+        return jsonify({"error": "No URL provided."}), 400
+
+    try:
+        unique_id = str(uuid.uuid4())
+        ydl_opts = {
             'format': 'best',
-            'outtmpl': f'{temp_dir}/video.%(ext)s',
+            'outtmpl': f'{unique_id}.%(ext)s',
         }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=True)
+            file_name = ydl.prepare_filename(info)
 
-    with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info(url, download=True)
-        file_path = ydl.prepare_filename(info)
-        if fmt == 'mp3':
-            file_path = file_path.rsplit('.', 1)[0] + '.mp3'
+        response = send_file(file_name, as_attachment=True)
 
-    return send_file(file_path, as_attachment=True)
+        # Clean up the file after sending it
+        @response.call_on_close
+        def cleanup():
+            try:
+                os.remove(file_name)
+            except Exception as e:
+                print(f"Cleanup error: {e}")
 
-if __name__ == '__main__':
-    app.run()
+        return response
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=5000)
