@@ -24,6 +24,7 @@ def download_video():
         ydl_opts = {
             'format': 'best',
             'outtmpl': f'{unique_id}.%(ext)s',
+            'cookiefile': 'cookies.txt',  # Use exported YouTube cookies
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=True)
@@ -31,7 +32,6 @@ def download_video():
 
         response = send_file(file_name, as_attachment=True)
 
-        # Clean up the file after sending it
         @response.call_on_close
         def cleanup():
             try:
