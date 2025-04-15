@@ -1,48 +1,140 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_cors import CORS
-import yt_dlp
-import os
-import uuid
+import random
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates', static_folder='static')
 CORS(app)
 
-@app.route("/")
+cryptos = {
+    'BTC': {'price': 65000, 'change': 2.5},
+    'ETH': {'price': 3200, 'change': 1.2},
+    'BNB': {'price': 420, 'change': -0.6},
+    'ADA': {'price': 0.58, 'change': 3.1},
+    'SOL': {'price': 180, 'change': 2.0},
+    'XRP': {'price': 0.75, 'change': -1.3},
+    'DOGE': {'price': 0.12, 'change': 4.5},
+}
+
+users = {
+    'demo_user': {
+        'password': 'demo',
+        'portfolio': {
+            'BTC': 0.05,
+            'ETH': 1.2,
+            'ADA': 1000
+        },
+        'usd_balance': 15000
+    }
+}
+
+@app.route('/')
 def home():
-    return "Backend is working!"
+    return render_template('home.html')
 
-@app.route("/download", methods=["POST"])
-def download_video():
-    data = request.get_json()
-    video_url = data.get("url")
+@app.route('/trading')
+def trading():
+    return render_template('trading.html')
 
-    if not video_url:
-        return jsonify({"error": "No URL provided."}), 400
+@app.route('/buy-sell')
+def buy_sell():
+    return render_template('buy_sell.html')
 
-    try:
-        unique_id = str(uuid.uuid4())
-        ydl_opts = {
-            'format': 'best',
-            'outtmpl': f'{unique_id}.%(ext)s',
-            'cookiefile': 'cookies.txt',  # Use exported YouTube cookies
+@app.route('/lessons')
+def lessons():
+    return render_template('lessons.html')
+
+@app.route('/calculator')
+def calculator():
+    return render_template('calculator.html')
+
+@app.route('/prices')
+def prices():
+    return render_template('prices.html', cryptos=cryptos)
+
+@app.route('/graphs')
+def graphs():
+    return render_template('graphs.html')
+
+@app.route('/signin', methods=['GET', 'POST'])
+def signin():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        user = users.get(username)
+        if user and user['password'] == password:
+            return redirect(url_for('home'))
+        else:
+            return render_template('signin.html', error='Invalid credentials')
+    return render_template('signin.html')
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        if username in users:
+            return render_template('signup.html', error='Username already exists')
+        users[username] = {
+            'password': password,
+            'portfolio': {},
+            'usd_balance': 10000
         }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
-            file_name = ydl.prepare_filename(info)
+        return redirect(url_for('signin'))
+    return render_template('signup.html')
 
-        response = send_file(file_name, as_attachment=True)
+@app.route('/api/cryptos')
+def get_cryptos():
+    for symbol in cryptos:
+        change = round(random.uniform(-1, 1), 2)
+        cryptos[symbol]['price'] += change
+        cryptos[symbol]['change'] = change
+    return jsonify(cryptos)
 
-        @response.call_on_close
-        def cleanup():
-            try:
-                os.remove(file_name)
-            except Exception as e:
-                print(f"Cleanup error: {e}")
+@app.route('/api/user/<username>')
+def get_user_data(username):
+    user = users.get(username)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
 
-        return response
+    portfolio_value = 0
+    for symbol, amount in user['portfolio'].items():
+        portfolio_value += amount * cryptos[symbol]['price']
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        'portfolio': user['portfolio'],
+        'usd_balance': user['usd_balance'],
+        'portfolio_value': round(portfolio_value, 2)
+    })
 
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000)
+@app.route('/api/trade', methods=['POST'])
+def trade():
+    data = request.json
+    username = data['username']
+    symbol = data['symbol']
+    action = data['action']
+    amount_usd = float(data['amount'])
+
+    user = users.get(username)
+    if not user or symbol not in cryptos:
+        return jsonify({'error': 'Invalid user or symbol'}), 400
+
+    price = cryptos[symbol]['price']
+    quantity = amount_usd / price
+
+    if action == 'buy':
+        if user['usd_balance'] < amount_usd:
+            return jsonify({'error': 'Insufficient USD balance'}), 400
+        user['usd_balance'] -= amount_usd
+        user['portfolio'][symbol] = user['portfolio'].get(symbol, 0) + quantity
+    elif action == 'sell':
+        if user['portfolio'].get(symbol, 0) < quantity:
+            return jsonify({'error': 'Insufficient crypto balance'}), 400
+        user['portfolio'][symbol] -= quantity
+        user['usd_balance'] += amount_usd
+    else:
+        return jsonify({'error': 'Invalid action'}), 400
+
+    return jsonify({'message': f'{action.capitalize()} successful'})
+
+if __name__ == '__main__':
+    app.run()
